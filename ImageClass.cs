@@ -13,24 +13,36 @@ using System.IO;
 namespace ImageClassification
 {
 
-    struct StringPath
+    public class StringPath
     {
         public string sPath;
         public string sLabel;
-        public ConcurrentQueue<string> res;
+        public StringPath(string path, string label)
+        {
+            this.sPath = path;
+            this.sLabel = label;
+        }
     }
 
-        public class ImageClass
+    public class ImageClass
     {
+        public static InferenceSession Session;
+        public ConcurrentQueue<StringPath> ResultPull;
 
-        public delegate void Output(bool msg);
-        Output Check;
+        public ImageClass(string modelPath)
+        {
+            Session = new InferenceSession(modelPath);
 
+        }
+
+        public void Stop()
+        {
+            source.Cancel();
+        }
         public void Process(string imagePath, int tmp)
         {
             using (var image = Image.Load<Rgb24>((string)imagePath ?? "image.jpg"))
             {
-
                 const int TargetWidth = 224;
                 const int TargetHeight = 224;
 
@@ -63,11 +75,11 @@ namespace ImageClassification
                 // input for onnx
                 var inputs = new List<NamedOnnxValue>
                 {
-                    NamedOnnxValue.CreateFromTensor(session.InputMetadata.Keys.First(),input)
+                    NamedOnnxValue.CreateFromTensor(Session.InputMetadata.Keys.First(),input)
                 };
 
                 // prediction
-                using (IDisposableReadOnlyCollection<DisposableNamedOnnxValue> results = session.Run(inputs))
+                using (IDisposableReadOnlyCollection<DisposableNamedOnnxValue> results = Session.Run(inputs))
                 {
 
                     var output = results.First().AsEnumerable<float>().ToArray();
@@ -76,26 +88,12 @@ namespace ImageClassification
 
                     int index = softmax.ToList().IndexOf(softmax.Max());
 
-                    StringPath resPath;
-                    resPath.sPath = imagePath;
-                    resPath.sLabel = LabelClass.Labels[index];
-                    resPath.res = resultList;
-
-                    TryEqueueEvent(resPath.sPath + resPath.sLabel, resPath.res);
+                    TryEqueueEvent(new StringPath((string)imagePath, LabelClass.Labels[index]), ResultPull);
                 }
+            }
         }
 
-        }
-
-        public ImageClass(string modelPath, Output Check)
-        {
-            session = new InferenceSession(modelPath);
-        }
-
-        public static InferenceSession session;
-        public ConcurrentQueue<string> resultList;
-
-        public void TryEqueueEvent(string newList, ConcurrentQueue<string> res)
+        public void TryEqueueEvent(StringPath newList, ConcurrentQueue<StringPath> res)
         {
             res.Enqueue(newList);
             Notify?.Invoke(res, new EventArgs());
@@ -103,66 +101,34 @@ namespace ImageClassification
 
         public delegate void AccountHandler(object sender, EventArgs e);
         public event AccountHandler Notify;
-        public static CancellationTokenSource source;
-        public static CancellationTokenSource end_source;
-        
+        public static CancellationTokenSource source = new CancellationTokenSource();
+        public static int end_source;
+
         public void ParallelProcess(string dirPath)
         {
             string[] files = Directory.GetFiles(dirPath, "*.jpg");
-
-            resultList = new ConcurrentQueue<string>();
-
-            source = new CancellationTokenSource();
-            end_source = new CancellationTokenSource();
-
-            bool msg_check = false;
-
-            Thread cancelTread = new Thread(() =>
-            {
-                while (true)
-                {
-                    if (ImageClass.end_source.Token.IsCancellationRequested)
-                    {
-                        source.Cancel();
-                        break;
-                    }
-                    Check(msg_check);
-                    if (msg_check)
-                    {
-                        source.Cancel();
-                        break;
-                    }
-                }
-            }
-            );
-            cancelTread.Start();
-            
+            ResultPull = new ConcurrentQueue<StringPath>();
             var events = new AutoResetEvent[files.Length];
 
             for (int i = 0; i < files.Length; i++)
             {
                 events[i] = new AutoResetEvent(false);
-
                 ThreadPool.QueueUserWorkItem(tmp =>
                 {
                     int count = (int)tmp;
-
                     if (!source.Token.IsCancellationRequested)
                         Process(files[count], count);
+                    Interlocked.Increment(ref end_source);
                     events[count].Set();
-                    if (count == files.Length - 1)
-                    {
-                        end_source.Cancel();
-                    }
+
                 }, i);
             }
-                       
+
             for (int i = 0; i < files.Length; i++)
             {
                 events[i].WaitOne();
             }
 
-            cancelTread.Join();
         }
 
     }
