@@ -8,13 +8,11 @@ namespace Task1
 {
     class Program
     {
-        static void Prediction(object sender, EventArgs e)
+        static void Prediction(StringPath sender, EventArgs e)
         {
-            StringPath item;
-            if ((ConcurrentQueue<StringPath>)sender != null)
+            if (sender != null)
             {
-                ((ConcurrentQueue<StringPath>)sender).TryDequeue(out item);
-                Console.WriteLine($"file: {item.sPath} result: {item.sLabel}");
+                Console.WriteLine($"file: {sender.sPath} result: {sender.sLabel}");
             }
         }
 
@@ -46,8 +44,6 @@ namespace Task1
             }
            );
             cancelTread.Start();
-            class_im.ParallelProcess(impath);
-
             class_im.ParallelProcess(impath);
         }
     }
